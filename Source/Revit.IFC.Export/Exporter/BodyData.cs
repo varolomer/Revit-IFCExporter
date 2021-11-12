@@ -1,0 +1,204 @@
+﻿//
+// BIM IFC library: this library works with Autodesk(R) Revit(R) to export IFC files containing model geometry.
+// Copyright (C) 2012  Autodesk, Inc.
+// 
+// This library is free software; you can redistribute it and/or
+// modify it under the terms of the GNU Lesser General Public
+// License as published by the Free Software Foundation; either
+// version 2.1 of the License, or (at your option) any later version.
+//
+// This library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+// Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public
+// License along with this library; if not, write to the Free Software
+// Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+//
+
+using System;
+using System.Collections.Generic;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.IFC;
+using Revit.IFC.Export.Utility;
+
+namespace Revit.IFC.Export.Exporter
+{
+   /// <summary>
+   /// Enums of shape representation type (according to the list defined in IFC4)
+   /// </summary>
+   public enum ShapeRepresentationType
+   {
+      Undefined,
+      Point,
+      PointCloud,
+      Curve,
+      Curve2D,
+      Curve3D,
+      Surface,
+      Surface2D,
+      Surface3D,
+      FillArea,
+      Text,
+      AdvancedSurface,
+      GeometricSet,
+      GeometricCurveSet,
+      Annotation2D,
+      SurfaceModel,
+      Tessellation,
+      SolidModel,
+      SweptSolid,
+      AdvancedSweptSolid,
+      Brep,
+      AdvancedBrep,
+      CSG,
+      Clipping,
+      // additional types
+      BoundingBox,
+      SectionedSpine,
+      LightSource,
+      MappedRepresentation,
+      // Misc. - non standard
+      Mesh,
+      Facetation
+   }
+
+   /// <summary>
+   /// This class contains output information from the ExportBody functions.
+   /// </summary>
+   public class BodyData
+   {
+      /// <summary>
+      /// The created shape representation handle.
+      /// </summary>
+      public IFCAnyHandle RepresentationHnd { get; set; } = null;
+
+      /// <summary>
+      /// The representation type of the created shape representation handle.
+      /// </summary>
+      public ShapeRepresentationType ShapeRepresentationType { get; set; } = ShapeRepresentationType.Undefined;
+
+      /// <summary>
+      /// The new offset transform, if the local placement was shifted to closer to the exported geometry location.
+      /// </summary>
+      public Transform OffsetTransform { get; set; } = null;
+
+      /// <summary>
+      /// Material Ids in a list to maintain its order and allows duplicate item (similar to MaterialIds)
+      /// </summary>
+      public IList<ElementId> MaterialIds { get; set; } = new List<ElementId>();
+
+      /// <summary>
+      /// Set of pair(s) of (Sub)Category name and the MaterialId of geometry object, which is part of a family
+      /// </summary>
+      public HashSet<Tuple<MaterialConstituentInfo, IFCAnyHandle>> RepresentationItemInfo { get; private set; } = new HashSet<Tuple<MaterialConstituentInfo, IFCAnyHandle>>();
+
+      /// <summary>
+      /// A handle for the Footprint representation
+      /// </summary>
+      public FootPrintInfo FootprintInfo { get; set; } = null;
+
+      /// <summary>
+      /// A Dictionary for Material Profile
+      /// </summary>
+      public MaterialAndProfile MaterialAndProfile { get; set; } = new MaterialAndProfile();
+
+      /// <summary>
+      /// Constructs a default BodyData object.
+      /// </summary>
+      public BodyData() { }
+
+      /// <summary>
+      /// Constructs a BodyData object.
+      /// </summary>
+      /// <param name="representationHnd">The representation handle.</param>
+      /// <param name="offsetTransform">The offset transform.</param>
+      /// <param name="materialIds">The material ids.</param>
+      public BodyData(IFCAnyHandle representationHnd, Transform offsetTransform, HashSet<ElementId> materialIds)
+      {
+         RepresentationHnd = representationHnd;
+         if (offsetTransform != null)
+            OffsetTransform = offsetTransform;
+         if (materialIds != null)
+         {
+            MaterialIds = new List<ElementId>(materialIds);
+         }
+      }
+
+      /// <summary>
+      /// Copies a BodyData object.
+      /// </summary>
+      /// <param name="representationHnd">The representation handle.</param>
+      /// <param name="offsetTransform">The offset transform.</param>
+      /// <param name="materialIds">The material ids.</param>
+      public BodyData(BodyData bodyData)
+      {
+         RepresentationHnd = bodyData.RepresentationHnd;
+         ShapeRepresentationType = bodyData.ShapeRepresentationType;
+         OffsetTransform = bodyData.OffsetTransform;
+         MaterialIds = bodyData.MaterialIds;
+      }
+
+      /// <summary>
+      /// Add a material id to the set of material ids.
+      /// </summary>
+      /// <param name="matId">The new material id.</param>
+      public void AddMaterial(ElementId matId)
+      {
+         MaterialIds.Add(matId);
+      }
+
+      /// <summary>
+      /// Add the pair of component category name and material id pair
+      /// This function also does AddMaterial(). Only use either AddMaterial if no component category needed, or this is Component Category is needed
+      /// </summary>
+      /// <param name="componentCategory">The Component Category name</param>
+      /// <param name="materialId">The material id</param>
+      public void AddRepresentationItemInfo(Document document, GeometryObject geomObject, ElementId materialId, IFCAnyHandle repItem)
+      {
+         GraphicsStyle graphicsStyle = document.GetElement(geomObject.GraphicsStyleId) as GraphicsStyle;
+         string catName = null;
+         if (graphicsStyle != null && graphicsStyle.GraphicsStyleCategory != null)
+         {
+            catName = graphicsStyle.GraphicsStyleCategory.Name;            // set with the proper category name if any
+         }
+         else
+         {
+            Material material = document.GetElement(materialId) as Material;
+            catName = (material != null) ? NamingUtil.GetMaterialName(material) : "<Unnamed>";    // Default name to the Material name if not null or <Unnamed>
+         }
+
+         RepresentationItemInfo.Add(Tuple.Create(new MaterialConstituentInfo(catName, materialId), repItem));
+         AddMaterial(materialId);
+      }
+
+      /// <summary>
+      /// Material and Profile information for IfcMaterialProfile
+      /// </summary>
+      public MaterialAndProfile materialAndProfile
+      {
+         get
+         {
+            if (MaterialAndProfile == null)
+            {
+               MaterialAndProfile = new MaterialAndProfile();
+            }
+            return MaterialAndProfile;
+         }
+         set { MaterialAndProfile = value; }
+      }
+
+      /// <summary>
+      /// Static function to create a new copy of BodyData but resetting the MaterialIds
+      /// </summary>
+      /// <param name="bodyDataIn">the input BodyData</param>
+      /// <returns>the new copy of BodyData with cleared MaterialIds</returns>
+      public static BodyData Create(BodyData bodyDataIn)
+      {
+         BodyData retBodyData = new BodyData(bodyDataIn);   // create a new copy of bodyDataIn
+         retBodyData.MaterialIds.Clear();                // Clear the MaterialIdsList
+         return retBodyData;
+      }
+   }
+}
